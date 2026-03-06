@@ -78,16 +78,20 @@ struct Gate
         }
         return GRAY;
     }
+
     const char* defaultLabel() const
     {
         switch(type)
         {
-            case GateType::NOT: return "NOT"; case GateType::AND: return "AND";
-            case GateType::OR:  return "OR";  case GateType::INPUT: return "INPUT";
+            case GateType::NOT:    return "NOT";
+            case GateType::AND:    return "AND";
+            case GateType::OR:     return "OR";
+            case GateType::INPUT:  return "INPUT";
             case GateType::OUTPUT: return "OUTPUT";
         }
         return "";
     }
+
     const char* displayName() const { return name[0]?name:defaultLabel(); }
 
     void rebuildNodes()
@@ -98,17 +102,30 @@ struct Gate
         float x=rect.x,y=rect.y,w=rect.width,h=rect.height;
         switch(type)
         {
-            case GateType::INPUT:   nodes.push_back({{x+w,y+h/2},true}); break;
-            case GateType::OUTPUT:  nodes.push_back({{x,y+h/2},false}); break;
-            case GateType::NOT:     nodes.push_back({{x,y+h/2},false}); nodes.push_back({{x+w,y+h/2},true}); break;
+            case GateType::INPUT:
+                nodes.push_back({{x+w,y+h/2},true}); break;
+            case GateType::OUTPUT:
+                nodes.push_back({{x,y+h/2},false}); break;
+            case GateType::NOT:
+                nodes.push_back({{x,y+h/2},false});
+                nodes.push_back({{x+w,y+h/2},true}); break;
             case GateType::AND: case GateType::OR:
-                nodes.push_back({{x,y+h/3},false}); nodes.push_back({{x,y+h*2/3},false});
+                nodes.push_back({{x,y+h/3},false});
+                nodes.push_back({{x,y+h*2/3},false});
                 nodes.push_back({{x+w,y+h/2},true}); break;
         }
         for(int i=0;i<(int)nodes.size()&&i<(int)sigs.size();i++) nodes[i].signal=sigs[i];
     }
-    Rectangle checkboxRect() const { return {rect.x+rect.width/2-CHKBOX_SZ/2,rect.y-CHKBOX_SZ-4,(float)CHKBOX_SZ,(float)CHKBOX_SZ}; }
-    Rectangle deleteRect()   const { return {rect.x+rect.width-16,rect.y-14,14,14}; }
+
+    Rectangle checkboxRect() const
+    {
+        return {rect.x+rect.width/2-CHKBOX_SZ/2,rect.y-CHKBOX_SZ-4,(float)CHKBOX_SZ,(float)CHKBOX_SZ};
+    }
+
+    Rectangle deleteRect() const
+    {
+        return {rect.x+rect.width-16,rect.y-14,14,14};
+    }
 };
 
 struct Wire { int gateA,nodeA,gateB,nodeB; };
@@ -125,7 +142,7 @@ struct SavedCircuit
 static void saveCircuitToFile(const SavedCircuit& sc)
 {
     fs::create_directories(CIRCUITS_DIR);
-    std::string safe = sc.name;
+    std::string safe=sc.name;
     for(auto& c:safe) if(c=='/'||c=='\\'||c=='|'||c=='\n') c='_';
     std::ofstream f(CIRCUITS_DIR+safe+".lgc");
     if(!f) return;
@@ -143,7 +160,6 @@ static bool loadCircuitFromFile(const std::string& path, SavedCircuit& sc)
     std::ifstream f(path);
     if(!f) return false;
     std::string line;
-    int gateCount=0,wireCount=0;
     while(std::getline(f,line))
     {
         std::istringstream ss(line);
@@ -151,25 +167,19 @@ static bool loadCircuitFromFile(const std::string& path, SavedCircuit& sc)
         std::vector<std::string> parts;
         while(std::getline(ss,tok,'|')) parts.push_back(tok);
         if(parts.empty()) continue;
-
-        if(parts[0]=="CIRCUIT"&&parts.size()>=2)   { sc.name=parts[1]; }
-        else if(parts[0]=="GATECOUNT"&&parts.size()>=2) { gateCount=std::stoi(parts[1]); }
-        else if(parts[0]=="WIRECOUNT"&&parts.size()>=2) { wireCount=std::stoi(parts[1]); }
+        if(parts[0]=="CIRCUIT"&&parts.size()>=2) sc.name=parts[1];
         else if(parts[0]=="GATE"&&parts.size()>=8)
         {
             SavedCircuit::GateData gd={};
-            gd.type =(GateType)std::stoi(parts[1]);
-            gd.relX  =std::stof(parts[2]); gd.relY=std::stof(parts[3]);
-            gd.w     =std::stof(parts[4]); gd.h   =std::stof(parts[5]);
+            gd.type=(GateType)std::stoi(parts[1]);
+            gd.relX=std::stof(parts[2]); gd.relY=std::stof(parts[3]);
+            gd.w=std::stof(parts[4]);    gd.h=std::stof(parts[5]);
             gd.checked=(bool)std::stoi(parts[6]);
             strncpy(gd.name,parts[7].c_str(),MAX_NAME);
             sc.gates.push_back(gd);
         }
         else if(parts[0]=="WIRE"&&parts.size()>=5)
-        {
-            sc.wires.push_back({std::stoi(parts[1]),std::stoi(parts[2]),
-                                 std::stoi(parts[3]),std::stoi(parts[4])});
-        }
+            sc.wires.push_back({std::stoi(parts[1]),std::stoi(parts[2]),std::stoi(parts[3]),std::stoi(parts[4])});
     }
     return !sc.name.empty();
 }
@@ -179,59 +189,44 @@ static std::vector<SavedCircuit> loadAllCircuits()
     std::vector<SavedCircuit> result;
     if(!fs::exists(CIRCUITS_DIR)) return result;
     for(auto& entry:fs::directory_iterator(CIRCUITS_DIR))
-    {
         if(entry.path().extension()==".lgc")
         {
             SavedCircuit sc;
-            if(loadCircuitFromFile(entry.path().string(),sc))
-                result.push_back(sc);
+            if(loadCircuitFromFile(entry.path().string(),sc)) result.push_back(sc);
         }
-    }
     return result;
 }
 
-static void placeCircuit(const SavedCircuit& sc, Vector2 centre,
-                         std::vector<Gate>& gates, std::vector<Wire>& wires,
-                         std::vector<bool>& selected)
+static void placeCircuit(const SavedCircuit& sc,Vector2 centre,
+                          std::vector<Gate>& gates,std::vector<Wire>& wires,std::vector<bool>& selected)
 {
     int base=(int)gates.size();
     for(auto& gd:sc.gates)
     {
-        Gate g;
-        g.type=gd.type;
+        Gate g; g.type=gd.type;
         g.rect={centre.x+gd.relX,centre.y+gd.relY,gd.w,gd.h};
-        g.checked=gd.checked;
-        strncpy(g.name,gd.name,MAX_NAME);
-        g.rebuildNodes();
-        gates.push_back(g);
-        selected.push_back(true);
+        g.checked=gd.checked; strncpy(g.name,gd.name,MAX_NAME);
+        g.rebuildNodes(); gates.push_back(g); selected.push_back(true);
     }
-    for(auto& wd:sc.wires)
-        wires.push_back({base+wd.gA,wd.nA,base+wd.gB,wd.nB});
+    for(auto& wd:sc.wires) wires.push_back({base+wd.gA,wd.nA,base+wd.gB,wd.nB});
 }
 
 static void deleteCircuitFile(const std::string& name)
 {
     std::string safe=name;
     for(auto& c:safe) if(c=='/'||c=='\\'||c=='|'||c=='\n') c='_';
-    std::string path=CIRCUITS_DIR+safe+".lgc";
-    fs::remove(path);
+    fs::remove(CIRCUITS_DIR+safe+".lgc");
 }
 
-static void buildSavePayload(const std::vector<Gate>& gates,
-                              const std::vector<bool>& selected,
-                              const std::vector<Wire>& wires,
-                              const char* cname,
-                              SavedCircuit& out)
+static void buildSavePayload(const std::vector<Gate>& gates,const std::vector<bool>& selected,
+                              const std::vector<Wire>& wires,const char* cname,SavedCircuit& out)
 {
     std::vector<int> selIdx;
     for(int i=0;i<(int)gates.size();i++) if(selected[i]) selIdx.push_back(i);
     if(selIdx.empty()) return;
-
     float cx=0,cy=0;
     for(int i:selIdx){ cx+=gates[i].rect.x+gates[i].rect.width/2; cy+=gates[i].rect.y+gates[i].rect.height/2; }
     cx/=selIdx.size(); cy/=selIdx.size();
-
     out.name=cname;
     std::map<int,int> idxMap;
     for(int si=0;si<(int)selIdx.size();si++)
@@ -241,8 +236,7 @@ static void buildSavePayload(const std::vector<Gate>& gates,
         gd.type=gates[gi].type;
         gd.relX=gates[gi].rect.x-cx; gd.relY=gates[gi].rect.y-cy;
         gd.w=gates[gi].rect.width;   gd.h=gates[gi].rect.height;
-        gd.checked=gates[gi].checked;
-        strncpy(gd.name,gates[gi].name,MAX_NAME);
+        gd.checked=gates[gi].checked; strncpy(gd.name,gates[gi].name,MAX_NAME);
         out.gates.push_back(gd);
     }
     for(const auto& w:wires)
@@ -264,14 +258,17 @@ static void DrawBezier(Vector2 a,Vector2 b,Color col,float thick)
         DrawLineEx(prev,cur,thick,col); prev=cur;
     }
 }
+
 static float v2dist(Vector2 a,Vector2 b){float dx=a.x-b.x,dy=a.y-b.y;return sqrtf(dx*dx+dy*dy);}
+
 static float pSegDist(Vector2 p,Vector2 a,Vector2 b)
 {
     float dx=b.x-a.x,dy=b.y-a.y,l2=dx*dx+dy*dy;
-    if(l2<1e-6f)return v2dist(p,a);
+    if(l2<1e-6f) return v2dist(p,a);
     float t=std::max(0.f,std::min(1.f,((p.x-a.x)*dx+(p.y-a.y)*dy)/l2));
     return v2dist(p,{a.x+t*dx,a.y+t*dy});
 }
+
 static float bezierDist(Vector2 from,Vector2 to,Vector2 p)
 {
     float dx=std::max(fabsf(to.x-from.x)*0.5f,60.f);
@@ -285,6 +282,7 @@ static float bezierDist(Vector2 from,Vector2 to,Vector2 p)
     }
     return mn;
 }
+
 static float nodeDist(Vector2 a,Vector2 b){float dx=a.x-b.x,dy=a.y-b.y;return sqrtf(dx*dx+dy*dy);}
 
 static void propagate(std::vector<Gate>& gates,const std::vector<Wire>& wires)
@@ -299,33 +297,30 @@ static void propagate(std::vector<Gate>& gates,const std::vector<Wire>& wires)
         {
             switch(g.type)
             {
-                case GateType::NOT:    if(g.nodes.size()>=2){g.outputSig=!g.nodes[0].signal;g.nodes[1].signal=g.outputSig;}break;
-                case GateType::AND:    if(g.nodes.size()>=3){g.outputSig=g.nodes[0].signal&&g.nodes[1].signal;g.nodes[2].signal=g.outputSig;}break;
-                case GateType::OR:     if(g.nodes.size()>=3){g.outputSig=g.nodes[0].signal||g.nodes[1].signal;g.nodes[2].signal=g.outputSig;}break;
-                case GateType::OUTPUT: if(!g.nodes.empty())g.outputSig=g.nodes[0].signal;break;
-                default:break;
+                case GateType::NOT:
+                    if(g.nodes.size()>=2){g.outputSig=!g.nodes[0].signal;g.nodes[1].signal=g.outputSig;} break;
+                case GateType::AND:
+                    if(g.nodes.size()>=3){g.outputSig=g.nodes[0].signal&&g.nodes[1].signal;g.nodes[2].signal=g.outputSig;} break;
+                case GateType::OR:
+                    if(g.nodes.size()>=3){g.outputSig=g.nodes[0].signal||g.nodes[1].signal;g.nodes[2].signal=g.outputSig;} break;
+                case GateType::OUTPUT:
+                    if(!g.nodes.empty()) g.outputSig=g.nodes[0].signal; break;
+                default: break;
             }
         }
     }
 }
 
-static void DrawGate(const Gate& g,bool hovered,bool selected)
+static void DrawGate(const Gate& g,bool hovered,bool sel)
 {
     Color body=g.bodyColor();
     Color dark={(unsigned char)(body.r/2),(unsigned char)(body.g/2),(unsigned char)(body.b/2),255};
-
     DrawRectangle((int)g.rect.x+4,(int)g.rect.y+4,(int)g.rect.width,(int)g.rect.height,{0,0,0,80});
     DrawRectangleRec(g.rect,body);
     DrawRectangle((int)g.rect.x,(int)g.rect.y,(int)g.rect.width,4,{255,255,255,40});
-
-    Color border = selected ? SEL_COLOR : (hovered ? Color{255,80,80,220} : dark);
-    float bthick = selected ? 3.f : 2.f;
-    DrawRectangleLinesEx(g.rect,bthick,border);
-
-    if(selected)
-    {
-        DrawRectangleLinesEx({g.rect.x-3,g.rect.y-3,g.rect.width+6,g.rect.height+6},1,{255,220,50,80});
-    }
+    Color border=sel?SEL_COLOR:(hovered?Color{255,80,80,220}:dark);
+    DrawRectangleLinesEx(g.rect,sel?3.f:2.f,border);
+    if(sel) DrawRectangleLinesEx({g.rect.x-3,g.rect.y-3,g.rect.width+6,g.rect.height+6},1,{255,220,50,80});
 
     const char* lbl=g.displayName();
     int fs=17,tw=MeasureText(lbl,fs);
@@ -353,10 +348,8 @@ static void DrawGate(const Gate& g,bool hovered,bool selected)
         DrawRectangleLinesEx(cb,1,LIGHTGRAY);
         if(g.checked)
         {
-            Vector2 p1={cb.x+2,cb.y+cb.height*0.55f};
-            Vector2 p2={cb.x+cb.width*0.42f,cb.y+cb.height-2};
-            Vector2 p3={cb.x+cb.width-2,cb.y+3};
-            DrawLineEx(p1,p2,2,WHITE); DrawLineEx(p2,p3,2,WHITE);
+            DrawLineEx({cb.x+2,cb.y+cb.height*0.55f},{cb.x+cb.width*0.42f,cb.y+cb.height-2},2,WHITE);
+            DrawLineEx({cb.x+cb.width*0.42f,cb.y+cb.height-2},{cb.x+cb.width-2,cb.y+3},2,WHITE);
         }
     }
 
@@ -397,19 +390,15 @@ static void DrawSavedPanel(int px,int py,int pw,int ph,
 {
     DrawRectangle(px,py,pw,ph,PANEL_BG);
     DrawLine(px,py,px,py+ph,{55,55,58,255});
-
     DrawRectangle(px,py,pw,38,{22,22,24,255});
     DrawLine(px,py+38,px+pw,py+38,{55,55,58,255});
-    const char* hdr="  Saved Circuits";
-    DrawText(hdr,px+8,py+11,15,{180,180,185,255});
+    DrawText("  Saved Circuits",px+8,py+11,15,{180,180,185,255});
 
     int ly=py+42,lh=ph-42;
-
     if(circuits.empty())
     {
         DrawText("No saved circuits yet.",px+12,ly+14,13,{80,80,84,255});
-        DrawText("Select gates then",px+12,ly+34,12,{70,70,74,255});
-        DrawText("press Ctrl+S to save.",px+12,ly+50,12,{70,70,74,255});
+        DrawText("Select gates, Ctrl+S to save.",px+12,ly+34,12,{70,70,74,255});
         return;
     }
 
@@ -426,14 +415,10 @@ static void DrawSavedPanel(int px,int py,int pw,int ph,
     {
         float cy=ly+i*(cardH+cardGap)-scroll;
         if(cy+cardH<ly||cy>ly+lh) continue;
-
         Rectangle card={(float)px+6,cy,(float)pw-12,cardH};
         DrawRectangleRec(card,PANEL_CARD);
         DrawRectangleLinesEx(card,1,{60,60,64,255});
-
-        const char* nm=circuits[i].name.c_str();
-        DrawText(nm,(int)card.x+8,(int)cy+7,14,WHITE);
-
+        DrawText(circuits[i].name.c_str(),(int)card.x+8,(int)cy+7,14,WHITE);
         char info[48];
         sprintf(info,"%d gates  %d wires",(int)circuits[i].gates.size(),(int)circuits[i].wires.size());
         DrawText(info,(int)card.x+8,(int)cy+26,11,{110,110,115,255});
@@ -472,17 +457,13 @@ static void DrawSaveModal(int SW,int SH,char* buf,bool& cancelled,bool& confirme
     DrawRectangle(mx,my,mw,36,{22,22,25,255});
     DrawLine(mx,my+36,mx+mw,my+36,{60,60,64,255});
     DrawText("Save Circuit as Reusable Node",mx+12,my+10,16,WHITE);
-
     DrawText("Name:",mx+12,my+50,14,LIGHTGRAY);
     Rectangle inp={(float)mx+12,(float)my+70,(float)mw-24,30};
     DrawRectangleRec(inp,{22,22,25,255});
     DrawRectangleLinesEx(inp,2,YELLOW);
     DrawText(buf,(int)inp.x+8,(int)inp.y+7,16,WHITE);
     if((int)(GetTime()*2)%2==0)
-    {
-        int tw=MeasureText(buf,16);
-        DrawRectangle((int)inp.x+8+tw,(int)inp.y+7,2,16,YELLOW);
-    }
+    { int tw=MeasureText(buf,16); DrawRectangle((int)inp.x+8+tw,(int)inp.y+7,2,16,YELLOW); }
 
     Rectangle cancelR={(float)mx+12,(float)my+mh-40,90,28};
     bool ch=CheckCollisionPointRec(GetMousePosition(),cancelR);
@@ -511,23 +492,22 @@ static void deleteGate(int idx,std::vector<Gate>& gates,std::vector<Wire>& wires
     for(auto& w:wires){ if(w.gateA>idx)w.gateA--; if(w.gateB>idx)w.gateB--; }
     gates.erase(gates.begin()+idx);
     selected.erase(selected.begin()+idx);
-    if(draggedIdx==idx) draggedIdx=-1;     else if(draggedIdx>idx) draggedIdx--;
-    if(renamingIdx==idx) renamingIdx=-1;   else if(renamingIdx>idx) renamingIdx--;
+    if(draggedIdx==idx) draggedIdx=-1;    else if(draggedIdx>idx)  draggedIdx--;
+    if(renamingIdx==idx) renamingIdx=-1;  else if(renamingIdx>idx) renamingIdx--;
     if(wireGateA==idx){wiring=false;wireGateA=-1;} else if(wireGateA>idx) wireGateA--;
 }
 
 int main()
 {
-    InitWindow(800,600,"Logic Gate Simulator");
-    const int SW=GetMonitorWidth(0),SH=GetMonitorHeight(0);
-    SetWindowSize(SW,SH); SetWindowPosition(0,0); SetTargetFPS(60);
-
-    const int canvasW = SW - PANEL_W;
+    SetConfigFlags(FLAG_WINDOW_RESIZABLE);
+    InitWindow(1280,720,"Logic Gate Simulator");
+    SetWindowMinSize(640,400);
+    SetTargetFPS(60);
 
     Camera2D cam={};
     cam.zoom=1.f;
-    cam.offset={canvasW/2.f,(SH-FOOTER_H)/2.f};
-    cam.target={canvasW/2.f,(SH-FOOTER_H)/2.f};
+    cam.offset={(float)(GetScreenWidth()-PANEL_W)/2.f,(float)(GetScreenHeight()-FOOTER_H)/2.f};
+    cam.target=cam.offset;
 
     bool    panning=false;
     Vector2 panStart={},camTargetAtPanStart={};
@@ -536,30 +516,31 @@ int main()
     std::vector<Wire> wires;
     std::vector<bool> selected;
 
-    std::vector<SavedCircuit> savedCircuits = loadAllCircuits();
+    std::vector<SavedCircuit> savedCircuits=loadAllCircuits();
     float panelScroll=0;
 
-    int  draggedIdx=-1,renamingIdx=-1;
-    bool wiring=false;
-    int  wireGateA=-1,wireNodeA=-1;
-    double lastClickTime=-1.0; int lastClickGate=-1;
-
-    bool savingModal=false;
-    char circuitNameBuf[MAX_NAME+1]={};
-
-    const int totalBarW=N_BTNS*BTN_W+(N_BTNS-1)*BTN_GAP;
-    const int barStartX=(canvasW-totalBarW)/2;
+    int    draggedIdx=-1,renamingIdx=-1;
+    bool   wiring=false;
+    int    wireGateA=-1,wireNodeA=-1;
+    double lastClickTime=-1.0;
+    int    lastClickGate=-1;
+    bool   savingModal=false;
+    char   circuitNameBuf[MAX_NAME+1]={};
 
     while(!WindowShouldClose())
     {
-        const int canvasH=SH-FOOTER_H;
+        const int SW      = GetScreenWidth();
+        const int SH      = GetScreenHeight();
+        const int canvasW = SW-PANEL_W;
+        const int canvasH = SH-FOOTER_H;
+        const int totalBarW=N_BTNS*BTN_W+(N_BTNS-1)*BTN_GAP;
+        const int barStartX=(canvasW-totalBarW)/2;
+
         Vector2 mouseScreen=GetMousePosition();
         bool mouseInCanvas=(mouseScreen.x<canvasW&&mouseScreen.y<canvasH);
-        bool mouseInPanel =(mouseScreen.x>=canvasW&&mouseScreen.y<SH);
         Vector2 mouseWorld=screenToWorld(mouseScreen,cam);
         bool panKey=false,panBtn=false;
 
-        // ── Save modal input ────────────────────────────────────
         if(savingModal)
         {
             int ch;
@@ -585,29 +566,22 @@ int main()
             goto draw;
         }
 
-        // ── Ctrl+S: open save modal if something is selected ────
         if((IsKeyDown(KEY_LEFT_CONTROL)||IsKeyDown(KEY_RIGHT_CONTROL))&&IsKeyPressed(KEY_S))
         {
-            bool anySelected=std::any_of(selected.begin(),selected.end(),[](bool b){return b;});
-            if(anySelected){ savingModal=true; memset(circuitNameBuf,0,sizeof(circuitNameBuf)); }
+            bool any=std::any_of(selected.begin(),selected.end(),[](bool b){return b;});
+            if(any){ savingModal=true; memset(circuitNameBuf,0,sizeof(circuitNameBuf)); }
         }
 
-        // ── Escape: clear selection ──────────────────────────────
         if(IsKeyPressed(KEY_ESCAPE)&&!wiring&&!savingModal)
             std::fill(selected.begin(),selected.end(),false);
 
-        // ── Ctrl+A: select all ───────────────────────────────────
         if((IsKeyDown(KEY_LEFT_CONTROL)||IsKeyDown(KEY_RIGHT_CONTROL))&&IsKeyPressed(KEY_A))
             std::fill(selected.begin(),selected.end(),true);
 
-        // ── Delete key: delete selected gates ───────────────────
         if(IsKeyPressed(KEY_DELETE)||IsKeyPressed(KEY_BACKSPACE))
-        {
             for(int i=(int)gates.size()-1;i>=0;i--)
                 if(selected[i]) deleteGate(i,gates,wires,selected,draggedIdx,renamingIdx,wireGateA,wiring);
-        }
 
-        // ── Zoom ─────────────────────────────────────────────────
         if(mouseInCanvas)
         {
             float wheel=GetMouseWheelMove();
@@ -623,7 +597,6 @@ int main()
             }
         }
 
-        // ── Pan ──────────────────────────────────────────────────
         panKey=IsKeyDown(KEY_SPACE); panBtn=IsMouseButtonDown(MOUSE_MIDDLE_BUTTON);
         if((panBtn||panKey)&&mouseInCanvas)
         {
@@ -633,9 +606,13 @@ int main()
         }
         else if(panning){panning=false;SetMouseCursor(MOUSE_CURSOR_DEFAULT);}
 
-        if(IsKeyPressed(KEY_R)){cam.zoom=1.f;cam.offset={canvasW/2.f,canvasH/2.f};cam.target={canvasW/2.f,canvasH/2.f};}
+        if(IsKeyPressed(KEY_R))
+        {
+            cam.zoom=1.f;
+            cam.offset={(float)canvasW/2.f,(float)canvasH/2.f};
+            cam.target=cam.offset;
+        }
 
-        // ── Rename text input ────────────────────────────────────
         if(renamingIdx>=0)
         {
             Gate& rg=gates[renamingIdx];
@@ -647,7 +624,6 @@ int main()
             goto draw;
         }
 
-        // ── Spawn from toolbar ───────────────────────────────────
         if(mouseScreen.y>=canvasH&&mouseScreen.x<canvasW)
         {
             for(int i=0;i<N_BTNS;i++)
@@ -657,7 +633,7 @@ int main()
                 Rectangle r={(float)bx,(float)by,(float)BTN_W,(float)BTN_H};
                 if(CheckCollisionPointRec(mouseScreen,r)&&IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
                 {
-                    Vector2 c=screenToWorld({canvasW/2.f,(float)canvasH/2.f},cam);
+                    Vector2 c=screenToWorld({(float)canvasW/2.f,(float)canvasH/2.f},cam);
                     Gate g; g.type=TOOLBAR[i].type;
                     g.rect={c.x-GATE_W/2.f,c.y-GATE_H/2.f,(float)GATE_W,(float)GATE_H};
                     g.name[0]='\0'; g.rebuildNodes();
@@ -666,17 +642,15 @@ int main()
             }
         }
 
-        // ── Left click on canvas ─────────────────────────────────
         if(IsMouseButtonPressed(MOUSE_LEFT_BUTTON)&&mouseInCanvas&&!panning)
         {
-            bool handled=false,shiftHeld=IsKeyDown(KEY_LEFT_SHIFT)||IsKeyDown(KEY_RIGHT_SHIFT);
+            bool handled=false;
+            bool shiftHeld=IsKeyDown(KEY_LEFT_SHIFT)||IsKeyDown(KEY_RIGHT_SHIFT);
 
-            // Delete (✕ button)
             for(int i=(int)gates.size()-1;i>=0;i--)
                 if(CheckCollisionPointRec(mouseWorld,gates[i].deleteRect()))
                 { deleteGate(i,gates,wires,selected,draggedIdx,renamingIdx,wireGateA,wiring); wireNodeA=-1; handled=true; break; }
 
-            // Double-click → rename
             if(!handled)
             {
                 double now=GetTime();
@@ -690,13 +664,11 @@ int main()
                     }
             }
 
-            // Checkbox
             if(!handled)
                 for(auto& g:gates)
                     if(g.type==GateType::INPUT&&CheckCollisionPointRec(mouseWorld,g.checkboxRect()))
                     { g.checked=!g.checked; handled=true; break; }
 
-            // Nodes (wiring)
             if(!handled&&!shiftHeld)
             {
                 int hitGate=-1,hitNode=-1; float hitR=NODE_HIT/cam.zoom;
@@ -726,20 +698,15 @@ int main()
                 }
             }
 
-            // Shift+click = toggle selection
             if(!handled&&shiftHeld)
-            {
                 for(int i=(int)gates.size()-1;i>=0;i--)
                     if(CheckCollisionPointRec(mouseWorld,gates[i].rect))
                     { selected[i]=!selected[i]; handled=true; break; }
-            }
 
-            // Drag or cancel wiring
             if(!handled)
             {
                 if(wiring){wiring=false;wireGateA=wireNodeA=-1;}
                 else
-                {
                     for(int i=(int)gates.size()-1;i>=0;i--)
                         if(CheckCollisionPointRec(mouseWorld,gates[i].rect))
                         {
@@ -747,11 +714,9 @@ int main()
                             gates[i].dragOffset={mouseWorld.x-gates[i].rect.x,mouseWorld.y-gates[i].rect.y};
                             break;
                         }
-                }
             }
         }
 
-        // ── Right click → delete gate or wire ───────────────────
         if(IsMouseButtonPressed(MOUSE_RIGHT_BUTTON)&&mouseInCanvas&&!panning)
         {
             bool dg=false;
@@ -767,7 +732,6 @@ int main()
             }
         }
 
-        // ── Drag move ────────────────────────────────────────────
         if(IsMouseButtonDown(MOUSE_LEFT_BUTTON)&&draggedIdx>=0&&!panning)
         {
             Gate& g=gates[draggedIdx];
@@ -782,7 +746,8 @@ int main()
         BeginDrawing();
         ClearBackground(BG_COLOR);
 
-        // ── World ────────────────────────────────────────────────
+        cam.offset={(float)canvasW/2.f,(float)canvasH/2.f};
+
         BeginMode2D(cam);
         {
             Vector2 tl=screenToWorld({0,0},cam),br=screenToWorld({(float)canvasW,(float)canvasH},cam);
@@ -791,7 +756,8 @@ int main()
                 for(int gy=gy0;gy<(int)br.y+gs;gy+=gs) DrawPixel(gx,gy,{75,75,78,255});
         }
 
-        int hovWire=-1; { float bd=10.f/cam.zoom; for(int wi=0;wi<(int)wires.size();wi++){ float d=bezierDist(gates[wires[wi].gateA].nodes[wires[wi].nodeA].pos,gates[wires[wi].gateB].nodes[wires[wi].nodeB].pos,mouseWorld); if(d<bd){bd=d;hovWire=wi;} } }
+        int hovWire=-1;
+        { float bd=10.f/cam.zoom; for(int wi=0;wi<(int)wires.size();wi++){ float d=bezierDist(gates[wires[wi].gateA].nodes[wires[wi].nodeA].pos,gates[wires[wi].gateB].nodes[wires[wi].nodeB].pos,mouseWorld); if(d<bd){bd=d;hovWire=wi;} } }
 
         for(int wi=0;wi<(int)wires.size();wi++)
         {
@@ -813,25 +779,22 @@ int main()
 
         EndMode2D();
 
-        // Mask gate overdraw into panel area
         DrawRectangle(canvasW,0,PANEL_W,SH,PANEL_BG);
-
-        // Footer
         DrawRectangle(0,canvasH,canvasW,FOOTER_H,BAR_COLOR);
         DrawLine(0,canvasH,canvasW,canvasH,{70,70,72,255});
+
         for(int i=0;i<N_BTNS;i++)
         {
             int bx=barStartX+i*(BTN_W+BTN_GAP),by=SH-FOOTER_H+(FOOTER_H-BTN_H)/2;
             DrawToolbarButton(bx,by,BTN_W,BTN_H,TOOLBAR[i].label,TOOLBAR[i].accent);
         }
 
-        // Panel
         int placeIdx=-1,deleteIdx=-1;
         DrawSavedPanel(canvasW,0,PANEL_W,SH,savedCircuits,panelScroll,placeIdx,deleteIdx);
 
         if(placeIdx>=0&&placeIdx<(int)savedCircuits.size())
         {
-            Vector2 c=screenToWorld({canvasW/2.f,(float)canvasH/2.f},cam);
+            Vector2 c=screenToWorld({(float)canvasW/2.f,(float)canvasH/2.f},cam);
             std::fill(selected.begin(),selected.end(),false);
             placeCircuit(savedCircuits[placeIdx],c,gates,wires,selected);
         }
@@ -841,10 +804,8 @@ int main()
             savedCircuits.erase(savedCircuits.begin()+deleteIdx);
         }
 
-        // Zoom indicator
         { char zt[32]; sprintf(zt,"%.0f%%",(double)(cam.zoom*100.f)); int zfs=16,ztw=MeasureText(zt,zfs); DrawRectangle(canvasW-ztw-22,6,ztw+16,22,{30,30,32,200}); DrawText(zt,canvasW-ztw-14,10,zfs,{160,160,163,255}); }
 
-        // Selection count badge
         int selCount=(int)std::count(selected.begin(),selected.end(),true);
         if(selCount>0)
         {
@@ -854,14 +815,11 @@ int main()
             DrawText(sb,canvasW/2-stw/2,canvasH-26,sfs,SEL_COLOR);
         }
 
-        // HUD
-        if(renamingIdx>=0) DrawText("Typing name — ENTER to confirm",10,10,16,YELLOW);
-        else if(savingModal) {}
-        else if(wiring)      DrawText("Click node to finish wire  |  Click canvas to cancel",10,10,16,{240,200,80,255});
-        else if(panning)     DrawText("Panning...",10,10,16,{100,200,255,255});
-        else DrawText("Shift+Click=select  Ctrl+S=save  Ctrl+A=all  Del=delete  R=reset  RClick=remove",10,10,13,{100,100,104,255});
+        if(renamingIdx>=0)       DrawText("Typing name — ENTER to confirm",10,10,16,YELLOW);
+        else if(wiring)          DrawText("Click node to finish wire  |  Click canvas to cancel",10,10,16,{240,200,80,255});
+        else if(panning)         DrawText("Panning...",10,10,16,{100,200,255,255});
+        else                     DrawText("Shift+Click=select  Ctrl+S=save  Ctrl+A=all  Del=delete  R=reset  RClick=remove",10,10,13,{100,100,104,255});
 
-        // Save modal drawn last (on top)
         if(savingModal)
         {
             bool cancelled=false,confirmed=false;
