@@ -1,5 +1,5 @@
+#include <unistd.h>
 #include "raylib.h"
-#include <raymath.h>
 #include <vector>
 #include <string>
 #include <cstring>
@@ -39,7 +39,7 @@ constexpr float ZOOM_MIN  = 0.15f;
 constexpr float ZOOM_MAX  = 4.0f;
 constexpr float ZOOM_STEP = 0.12f;
 
-const std::string CIRCUITS_DIR = "./circuits/";
+std::string CIRCUITS_DIR;
 
 enum class GateType { NOT, AND, OR, INPUT, OUTPUT };
 
@@ -167,21 +167,48 @@ static bool loadCircuitFromFile(const std::string& path, SavedCircuit& sc)
         std::vector<std::string> parts;
         while(std::getline(ss,tok,'|')) parts.push_back(tok);
         if(parts.empty()) continue;
-        if(parts[0]=="CIRCUIT"&&parts.size()>=2) sc.name=parts[1];
-        else if(parts[0]=="GATE"&&parts.size()>=8)
+        if(parts[0]=="CIRCUIT"&&parts.size()>=2)
         {
-            SavedCircuit::GateData gd={};
-            gd.type=(GateType)std::stoi(parts[1]);
-            gd.relX=std::stof(parts[2]); gd.relY=std::stof(parts[3]);
-            gd.w=std::stof(parts[4]);    gd.h=std::stof(parts[5]);
-            gd.checked=(bool)std::stoi(parts[6]);
-            strncpy(gd.name,parts[7].c_str(),MAX_NAME);
-            sc.gates.push_back(gd);
+            sc.name=parts[1];
+        }
+        else if(parts[0]=="GATE"&&parts.size()>=7)
+        {
+            try
+            {
+                SavedCircuit::GateData gd={};
+                gd.type    = (GateType)std::stoi(parts[1]);
+                gd.relX    = std::stof(parts[2]);
+                gd.relY    = std::stof(parts[3]);
+                gd.w       = std::stof(parts[4]);
+                gd.h       = std::stof(parts[5]);
+                gd.checked = (bool)std::stoi(parts[6]);
+                if(parts.size()>=8) strncpy(gd.name, parts[7].c_str(), MAX_NAME);
+                gd.name[MAX_NAME] = '\0';
+                if(gd.w<=0||gd.h<=0){ gd.w=(float)GATE_W; gd.h=(float)GATE_H; }
+                sc.gates.push_back(gd);
+            }
+            catch(...){}
         }
         else if(parts[0]=="WIRE"&&parts.size()>=5)
-            sc.wires.push_back({std::stoi(parts[1]),std::stoi(parts[2]),std::stoi(parts[3]),std::stoi(parts[4])});
+        {
+            try
+            {
+                SavedCircuit::WireData wd={};
+                wd.gA=std::stoi(parts[1]); wd.nA=std::stoi(parts[2]);
+                wd.gB=std::stoi(parts[3]); wd.nB=std::stoi(parts[4]);
+                sc.wires.push_back(wd);
+            }
+            catch(...){}
+        }
     }
-    return !sc.name.empty();
+    int gcount=(int)sc.gates.size();
+    sc.wires.erase(
+        std::remove_if(sc.wires.begin(),sc.wires.end(),
+            [gcount](const SavedCircuit::WireData& w){
+                return w.gA<0||w.gA>=gcount||w.gB<0||w.gB>=gcount;
+            }),
+        sc.wires.end());
+    return !sc.name.empty()&&!sc.gates.empty();
 }
 
 static std::vector<SavedCircuit> loadAllCircuits()
@@ -497,8 +524,23 @@ static void deleteGate(int idx,std::vector<Gate>& gates,std::vector<Wire>& wires
     if(wireGateA==idx){wiring=false;wireGateA=-1;} else if(wireGateA>idx) wireGateA--;
 }
 
-int main()
+int main(int argc, char* argv[])
 {
+    {
+        char buf[4096]={};
+        ssize_t n=readlink("/proc/self/exe",buf,sizeof(buf)-1);
+        if(n>0)
+        {
+            fs::path exe(buf);
+            CIRCUITS_DIR=(exe.parent_path()/"circuits").string()+"/";
+        }
+        else
+        {
+            fs::path exe=fs::absolute(fs::path(argv[0]));
+            CIRCUITS_DIR=(exe.parent_path()/"circuits").string()+"/";
+        }
+
+    }
     SetConfigFlags(FLAG_WINDOW_RESIZABLE);
     InitWindow(1280,720,"Logic Gate Simulator");
     SetWindowMinSize(640,400);
@@ -526,6 +568,10 @@ int main()
     int    lastClickGate=-1;
     bool   savingModal=false;
     char   circuitNameBuf[MAX_NAME+1]={};
+
+    bool    dragSelecting=false;
+    Vector2 dragSelStartW={};
+    Vector2 dragSelCurW={};
 
     while(!WindowShouldClose())
     {
@@ -707,13 +753,42 @@ int main()
             {
                 if(wiring){wiring=false;wireGateA=wireNodeA=-1;}
                 else
+                {
+                    bool hitGate2=false;
                     for(int i=(int)gates.size()-1;i>=0;i--)
                         if(CheckCollisionPointRec(mouseWorld,gates[i].rect))
                         {
                             draggedIdx=i; gates[i].dragging=true;
                             gates[i].dragOffset={mouseWorld.x-gates[i].rect.x,mouseWorld.y-gates[i].rect.y};
-                            break;
+                            hitGate2=true; break;
                         }
+                    if(!hitGate2)
+                    {
+                        dragSelecting=true;
+                        dragSelStartW=mouseWorld;
+                        dragSelCurW=mouseWorld;
+                        if(!shiftHeld) std::fill(selected.begin(),selected.end(),false);
+                    }
+                }
+            }
+        }
+
+        if(dragSelecting&&IsMouseButtonDown(MOUSE_LEFT_BUTTON)&&mouseInCanvas)
+            dragSelCurW=mouseWorld;
+
+        if(dragSelecting&&IsMouseButtonReleased(MOUSE_LEFT_BUTTON))
+        {
+            dragSelecting=false;
+            float rx=std::min(dragSelStartW.x,dragSelCurW.x);
+            float ry=std::min(dragSelStartW.y,dragSelCurW.y);
+            float rw=fabsf(dragSelCurW.x-dragSelStartW.x);
+            float rh=fabsf(dragSelCurW.y-dragSelStartW.y);
+            if(rw>4&&rh>4)
+            {
+                Rectangle selRect={rx,ry,rw,rh};
+                for(int i=0;i<(int)gates.size();i++)
+                    if(CheckCollisionRecs(selRect,gates[i].rect))
+                        selected[i]=true;
             }
         }
 
@@ -777,6 +852,16 @@ int main()
         for(int i=0;i<(int)gates.size();i++)
             DrawGate(gates[i],i==hovGate,i<(int)selected.size()&&selected[i]);
 
+        if(dragSelecting)
+        {
+            float rx=std::min(dragSelStartW.x,dragSelCurW.x);
+            float ry=std::min(dragSelStartW.y,dragSelCurW.y);
+            float rw=fabsf(dragSelCurW.x-dragSelStartW.x);
+            float rh=fabsf(dragSelCurW.y-dragSelStartW.y);
+            DrawRectangle((int)rx,(int)ry,(int)rw,(int)rh,{255,220,50,25});
+            DrawRectangleLinesEx({rx,ry,rw,rh},1.5f/cam.zoom,{255,220,50,200});
+        }
+
         EndMode2D();
 
         DrawRectangle(canvasW,0,PANEL_W,SH,PANEL_BG);
@@ -818,7 +903,8 @@ int main()
         if(renamingIdx>=0)       DrawText("Typing name — ENTER to confirm",10,10,16,YELLOW);
         else if(wiring)          DrawText("Click node to finish wire  |  Click canvas to cancel",10,10,16,{240,200,80,255});
         else if(panning)         DrawText("Panning...",10,10,16,{100,200,255,255});
-        else                     DrawText("Shift+Click=select  Ctrl+S=save  Ctrl+A=all  Del=delete  R=reset  RClick=remove",10,10,13,{100,100,104,255});
+        else if(dragSelecting)   DrawText("Release to select  |  Shift=add to selection",10,10,14,{255,220,50,255});
+        else                     DrawText("Drag=select  Shift+Click=add  Ctrl+S=save  Ctrl+A=all  Del=delete  R=reset  RClick=remove",10,10,13,{100,100,104,255});
 
         if(savingModal)
         {
