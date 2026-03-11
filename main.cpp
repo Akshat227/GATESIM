@@ -41,7 +41,7 @@ constexpr float ZOOM_STEP = 0.12f;
 
 std::string CIRCUITS_DIR;
 
-enum class GateType { NOT, AND, OR, INPUT, OUTPUT };
+enum class GateType { NOT, AND, OR, INPUT, OUTPUT, CUSTOM };
 
 struct ToolBtn { const char* label; GateType type; Color accent; };
 const ToolBtn TOOLBAR[N_BTNS] = {
@@ -53,6 +53,8 @@ const ToolBtn TOOLBAR[N_BTNS] = {
 };
 
 struct Node { Vector2 pos; bool isOutput=false; bool signal=false; };
+
+struct Wire { int gateA,nodeA,gateB,nodeB; };
 
 struct Gate
 {
@@ -66,6 +68,13 @@ struct Gate
     char      name[MAX_NAME+1]={};
     std::vector<Node> nodes;
 
+    // CUSTOM gate internals
+    std::string           circuitLabel;
+    std::vector<Gate>     intGates;
+    std::vector<Wire>     intWires;
+    std::vector<int>      inPins;
+    std::vector<int>      outPins;
+
     Color bodyColor() const
     {
         switch(type)
@@ -75,6 +84,7 @@ struct Gate
             case GateType::OR:     return {180,100, 50,255};
             case GateType::INPUT:  return { 90, 90,180,255};
             case GateType::OUTPUT: return outputSig?Color{50,210,90,255}:Color{180,60,60,255};
+            case GateType::CUSTOM:  return { 80, 60,120,255};
         }
         return GRAY;
     }
@@ -88,6 +98,7 @@ struct Gate
             case GateType::OR:     return "OR";
             case GateType::INPUT:  return "INPUT";
             case GateType::OUTPUT: return "OUTPUT";
+            case GateType::CUSTOM:  return circuitLabel.c_str();
         }
         return "";
     }
@@ -96,6 +107,7 @@ struct Gate
 
     void rebuildNodes()
     {
+        if(type==GateType::CUSTOM){ rebuildCustomNodes(); return; }
         std::vector<bool> sigs(nodes.size(),false);
         for(int i=0;i<(int)nodes.size();i++) sigs[i]=nodes[i].signal;
         nodes.clear();
@@ -116,6 +128,28 @@ struct Gate
         }
         for(int i=0;i<(int)nodes.size()&&i<(int)sigs.size();i++) nodes[i].signal=sigs[i];
     }
+    void rebuildCustomNodes()
+    {
+        std::vector<bool> sigs(nodes.size(),false);
+        for(int i=0;i<(int)nodes.size();i++) sigs[i]=nodes[i].signal;
+        nodes.clear();
+        int nIn=(int)inPins.size(), nOut=(int)outPins.size();
+        int maxP=std::max(std::max(nIn,nOut),1);
+        rect.height=std::max(70.f,(float)maxP*34.f+20.f);
+        float x2=rect.x,y2=rect.y,w2=rect.width,h2=rect.height;
+        for(int k=0;k<nIn;k++)
+        {
+            float fy=y2+(k+1)*h2/(nIn+1);
+            bool sig=((int)sigs.size()>k)?sigs[k]:false;
+            nodes.push_back({{x2,fy},false,sig});
+        }
+        for(int k=0;k<nOut;k++)
+        {
+            float fy=y2+(k+1)*h2/(nOut+1);
+            bool sig=((int)sigs.size()>nIn+k)?sigs[nIn+k]:false;
+            nodes.push_back({{x2+w2,fy},true,sig});
+        }
+    }
 
     Rectangle checkboxRect() const
     {
@@ -128,7 +162,6 @@ struct Gate
     }
 };
 
-struct Wire { int gateA,nodeA,gateB,nodeB; };
 
 struct SavedCircuit
 {
@@ -238,6 +271,40 @@ static void placeCircuit(const SavedCircuit& sc,Vector2 centre,
     for(auto& wd:sc.wires) wires.push_back({base+wd.gA,wd.nA,base+wd.gB,wd.nB});
 }
 
+static void placeAsNode(const SavedCircuit& sc,Vector2 centre,
+                        std::vector<Gate>& gates,std::vector<bool>& selected)
+{
+    Gate g;
+    g.type=GateType::CUSTOM;
+    g.circuitLabel=sc.name;
+
+    for(auto& gd:sc.gates)
+    {
+        Gate ig; ig.type=gd.type;
+        ig.rect={gd.relX,gd.relY,gd.w,gd.h};
+        ig.checked=gd.checked;
+        strncpy(ig.name,gd.name,MAX_NAME); ig.name[MAX_NAME]='\0';
+        ig.rebuildNodes();
+        g.intGates.push_back(ig);
+    }
+    for(auto& wd:sc.wires)
+        g.intWires.push_back({wd.gA,wd.nA,wd.gB,wd.nB});
+
+    for(int i=0;i<(int)g.intGates.size();i++)
+    {
+        if(g.intGates[i].type==GateType::INPUT)  g.inPins.push_back(i);
+        if(g.intGates[i].type==GateType::OUTPUT) g.outPins.push_back(i);
+    }
+
+    int maxP=std::max(std::max((int)g.inPins.size(),(int)g.outPins.size()),1);
+    float h=std::max(70.f,(float)maxP*34.f+20.f);
+    g.rect={centre.x-70.f,centre.y-h/2.f,140.f,h};
+    g.rebuildCustomNodes();
+
+    gates.push_back(g);
+    selected.push_back(false);
+}
+
 static void deleteCircuitFile(const std::string& name)
 {
     std::string safe=name;
@@ -332,6 +399,34 @@ static void propagate(std::vector<Gate>& gates,const std::vector<Wire>& wires)
                     if(g.nodes.size()>=3){g.outputSig=g.nodes[0].signal||g.nodes[1].signal;g.nodes[2].signal=g.outputSig;} break;
                 case GateType::OUTPUT:
                     if(!g.nodes.empty()) g.outputSig=g.nodes[0].signal; break;
+                case GateType::CUSTOM:
+                {
+                    for(int k=0;k<(int)g.inPins.size()&&k<(int)g.nodes.size();k++)
+                        g.intGates[g.inPins[k]].checked=g.nodes[k].signal;
+                    for(auto& ig:g.intGates) for(auto& n:ig.nodes) n.signal=false;
+                    for(auto& ig:g.intGates)
+                        if(ig.type==GateType::INPUT){ig.outputSig=ig.checked;if(!ig.nodes.empty())ig.nodes[0].signal=ig.checked;}
+                    for(int p=0;p<(int)g.intGates.size()+1;p++)
+                    {
+                        for(const auto& w:g.intWires) g.intGates[w.gateB].nodes[w.nodeB].signal=g.intGates[w.gateA].nodes[w.nodeA].signal;
+                        for(auto& ig:g.intGates)
+                        {
+                            switch(ig.type)
+                            {
+                                case GateType::NOT: if(ig.nodes.size()>=2){ig.outputSig=!ig.nodes[0].signal;ig.nodes[1].signal=ig.outputSig;} break;
+                                case GateType::AND: if(ig.nodes.size()>=3){ig.outputSig=ig.nodes[0].signal&&ig.nodes[1].signal;ig.nodes[2].signal=ig.outputSig;} break;
+                                case GateType::OR:  if(ig.nodes.size()>=3){ig.outputSig=ig.nodes[0].signal||ig.nodes[1].signal;ig.nodes[2].signal=ig.outputSig;} break;
+                                case GateType::OUTPUT: if(!ig.nodes.empty())ig.outputSig=ig.nodes[0].signal; break;
+                                default: break;
+                            }
+                        }
+                    }
+                    int nIn=(int)g.inPins.size();
+                    for(int k=0;k<(int)g.outPins.size();k++)
+                        if(nIn+k<(int)g.nodes.size())
+                            g.nodes[nIn+k].signal=g.intGates[g.outPins[k]].outputSig;
+                    break;
+                }
                 default: break;
             }
         }
@@ -388,6 +483,31 @@ static void DrawGate(const Gate& g,bool hovered,bool sel)
         Rectangle pill={g.rect.x+g.rect.width/2-btw/2-6,g.rect.y-22,(float)(btw+12),18};
         DrawRectangleRec(pill,bc); DrawRectangleLinesEx(pill,1,dark);
         DrawText(badge,(int)(pill.x+(pill.width-btw)/2),(int)(pill.y+2),bfs,WHITE);
+    }
+
+    if(g.type==GateType::CUSTOM)
+    {
+        // pin labels
+        int nIn=(int)g.inPins.size(),nOut=(int)g.outPins.size();
+        int pfs=10;
+        for(int k=0;k<nIn;k++)
+        {
+            const char* lbl2=g.intGates[g.inPins[k]].displayName();
+            int tw2=MeasureText(lbl2,pfs);
+            float fy=g.nodes[k].pos.y;
+            DrawText(lbl2,(int)(g.rect.x+6),(int)(fy-pfs/2),pfs,{220,220,220,200});
+        }
+        for(int k=0;k<nOut;k++)
+        {
+            const char* lbl2=g.intGates[g.outPins[k]].displayName();
+            int tw2=MeasureText(lbl2,pfs);
+            float fy=g.nodes[nIn+k].pos.y;
+            DrawText(lbl2,(int)(g.rect.x+g.rect.width-tw2-6),(int)(fy-pfs/2),pfs,{220,220,220,200});
+        }
+        // divider line
+        DrawLine((int)(g.rect.x+g.rect.width/2),(int)(g.rect.y+4),
+                 (int)(g.rect.x+g.rect.width/2),(int)(g.rect.y+g.rect.height-4),
+                 {255,255,255,20});
     }
 
     for(const auto& n:g.nodes)
@@ -881,7 +1001,7 @@ int main(int argc, char* argv[])
         {
             Vector2 c=screenToWorld({(float)canvasW/2.f,(float)canvasH/2.f},cam);
             std::fill(selected.begin(),selected.end(),false);
-            placeCircuit(savedCircuits[placeIdx],c,gates,wires,selected);
+            placeAsNode(savedCircuits[placeIdx],c,gates,selected);
         }
         if(deleteIdx>=0&&deleteIdx<(int)savedCircuits.size())
         {
